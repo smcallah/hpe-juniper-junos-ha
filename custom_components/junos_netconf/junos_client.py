@@ -135,7 +135,7 @@ def parse_junos_data(
         model=_first_text_any(system_xml, ("hardware-model", "model")),
         serial_number=_first_text_any(system_xml, ("serial-number",)),
         version=_first_text_any(system_xml, ("os-version", "junos-version")),
-        uptime=_first_uptime(system_xml, uptime_xml),
+        uptime=_first_uptime(system_xml, uptime_xml, re_xml),
         re_cpu_idle=_first_int_any(re_xml, ("cpu-idle", "idle-cpu")),
         re_memory_usage=_first_int_any(
             re_xml,
@@ -203,11 +203,12 @@ def _first_int_any(root: Any, names: tuple[str, ...]) -> int | None:
     return None
 
 
-def _first_uptime(system_xml: Any, uptime_xml: Any | None) -> str | None:
-    """Return uptime from system info, with system uptime RPC as fallback."""
-    return _first_text_any(system_xml, ("up-time", "uptime")) or _first_text_any(
-        uptime_xml,
-        ("up-time", "uptime"),
+def _first_uptime(system_xml: Any, uptime_xml: Any | None, re_xml: Any) -> str | None:
+    """Return uptime from system, uptime, or routing-engine XML."""
+    return (
+        _first_text_any(system_xml, ("up-time", "uptime"))
+        or _first_text_any(uptime_xml, ("up-time", "uptime", "time-length"))
+        or _first_text_any(re_xml, ("up-time", "uptime"))
     )
 
 
