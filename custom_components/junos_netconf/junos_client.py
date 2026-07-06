@@ -32,6 +32,22 @@ class JunosData:
     re_cpu_idle: int | None
     re_memory_usage: int | None
     chassis_alarm_count: int | None
+    active_flow_sessions: int | None
+    max_flow_sessions: int | None
+    ipsec_tunnel_count: int | None
+    ipsec_tunnels_up: int | None
+    ipsec_tunnels_down: int | None
+    chassis_cluster_enabled: bool | None
+    chassis_cluster_redundancy_group_status: str | None
+
+
+@dataclass(frozen=True)
+class IpsecTunnelCounts:
+    """Parsed IPsec tunnel totals."""
+
+    total: int | None
+    up: int | None
+    down: int | None
 
 
 class JunosPyEzClient:
@@ -61,26 +77,49 @@ class JunosPyEzClient:
             _LOGGER.debug("Opening Junos NETCONF session to %s:%s", self.host, self.port)
             dev.open()
             system_xml = self._optional_rpc(
+                dev,
                 "get-system-information",
-                dev.rpc.get_system_information,
+                "get_system_information",
             )
             uptime_xml = self._optional_rpc(
+                dev,
                 "get-system-uptime-information",
-                dev.rpc.get_system_uptime_information,
+                "get_system_uptime_information",
             )
             re_xml = self._optional_rpc(
+                dev,
                 "get-route-engine-information",
-                dev.rpc.get_route_engine_information,
+                "get_route_engine_information",
             )
             alarm_xml = self._optional_rpc(
+                dev,
                 "get-alarm-information",
-                dev.rpc.get_alarm_information,
+                "get_alarm_information",
+            )
+            flow_xml = self._optional_rpc(
+                dev,
+                "get-flow-session-information",
+                "get_flow_session_information",
+                summary=True,
+            )
+            ipsec_xml = self._optional_rpc(
+                dev,
+                "get-ipsec-security-associations-information",
+                "get_ipsec_security_associations_information",
+            )
+            cluster_xml = self._optional_rpc(
+                dev,
+                "get-chassis-cluster-status",
+                "get_chassis_cluster_status",
             )
             data = parse_junos_data(
                 system_xml,
                 re_xml,
                 alarm_xml,
                 uptime_xml=uptime_xml,
+                flow_xml=flow_xml,
+                ipsec_xml=ipsec_xml,
+                cluster_xml=cluster_xml,
                 fallback_host=self.host,
             )
             _log_missing_metrics(data, re_xml, uptime_xml)
@@ -120,10 +159,17 @@ class JunosPyEzClient:
             _LOGGER.debug("PyEZ Device does not accept hostkey_verify directly")
             return Device(**kwargs)
 
-    def _optional_rpc(self, rpc_name: str, rpc_call: Any) -> Any | None:
+    def _optional_rpc(
+        self,
+        dev: Device,
+        rpc_name: str,
+        method_name: str,
+        **kwargs: Any,
+    ) -> Any | None:
         """Run an optional read-only RPC without failing the whole poll."""
         try:
-            return rpc_call()
+            rpc_call = getattr(dev.rpc, method_name)
+            return rpc_call(**kwargs)
         except (AttributeError, RpcError) as err:
             _LOGGER.debug("Optional Junos RPC %s failed: %s", rpc_name, err)
             return None
@@ -144,9 +190,13 @@ def parse_junos_data(
     alarm_xml: Any,
     *,
     uptime_xml: Any | None = None,
+    flow_xml: Any | None = None,
+    ipsec_xml: Any | None = None,
+    cluster_xml: Any | None = None,
     fallback_host: str,
 ) -> JunosData:
     """Parse the Junos operational XML into a small, stable data model."""
+    ipsec_counts = _ipsec_tunnel_counts(ipsec_xml)
     return JunosData(
         hostname=_first_text_any(system_xml, ("host-name", "hostname")) or fallback_host,
         model=_first_text_any(system_xml, ("hardware-model", "model")),
@@ -164,6 +214,13 @@ def parse_junos_data(
             ),
         ),
         chassis_alarm_count=_alarm_count(alarm_xml),
+        active_flow_sessions=_active_flow_sessions(flow_xml),
+        max_flow_sessions=_max_flow_sessions(flow_xml),
+        ipsec_tunnel_count=ipsec_counts.total,
+        ipsec_tunnels_up=ipsec_counts.up,
+        ipsec_tunnels_down=ipsec_counts.down,
+        chassis_cluster_enabled=_chassis_cluster_enabled(cluster_xml),
+        chassis_cluster_redundancy_group_status=_chassis_cluster_rg_status(cluster_xml),
     )
 
 
@@ -220,6 +277,28 @@ def _first_int_any(root: Any, names: tuple[str, ...]) -> int | None:
     return None
 
 
+def _first_int_matching(root: Any, needles: tuple[str, ...]) -> int | None:
+    """Return first integer whose XML tag contains all requested text."""
+    if root is None:
+        return None
+    for node in root.iter():
+        name = _local_name(str(node.tag)).lower()
+        if all(needle in name for needle in needles) and node.text:
+            try:
+                return int(node.text.replace("%", "").strip())
+            except ValueError:
+                continue
+    return None
+
+
+def _first_available(*values: int | None) -> int | None:
+    """Return the first value that is not None, preserving zero."""
+    for value in values:
+        if value is not None:
+            return value
+    return None
+
+
 def _first_uptime(system_xml: Any, uptime_xml: Any | None, re_xml: Any) -> str | None:
     """Return uptime from system, uptime, or routing-engine XML."""
     return (
@@ -234,6 +313,120 @@ def _alarm_count(alarm_xml: Any | None) -> int | None:
     if alarm_xml is None:
         return None
     return len(_descendants(alarm_xml, "alarm-detail"))
+
+
+def _active_flow_sessions(flow_xml: Any | None) -> int | None:
+    """Return active SRX flow sessions from supported summary XML."""
+    return _first_available(
+        _first_int_any(
+            flow_xml,
+            (
+                "active-sessions",
+                "active-session-count",
+                "active-flow-session-count",
+            ),
+        ),
+        _first_int_matching(flow_xml, ("active", "session")),
+    )
+
+
+def _max_flow_sessions(flow_xml: Any | None) -> int | None:
+    """Return maximum SRX flow sessions from supported summary XML."""
+    return _first_available(
+        _first_int_any(
+            flow_xml,
+            (
+                "max-sessions",
+                "max-session-count",
+                "maximum-sessions",
+                "maximum-session-count",
+                "session-limit",
+            ),
+        ),
+        _first_int_matching(flow_xml, ("max", "session")),
+    )
+
+
+def _ipsec_tunnel_counts(ipsec_xml: Any | None) -> IpsecTunnelCounts:
+    """Return total, up, and down IPsec tunnel counts."""
+    if ipsec_xml is None:
+        return IpsecTunnelCounts(None, None, None)
+
+    entries = _ipsec_entries(ipsec_xml)
+    if not entries:
+        return IpsecTunnelCounts(None, None, None)
+
+    up = 0
+    down = 0
+    for entry in entries:
+        state = (
+            _first_text_any(
+                entry,
+                ("sa-block-state", "ipsec-sa-state", "state", "status"),
+            )
+            or ""
+        ).lower()
+        if state in {"up", "active", "established"}:
+            up += 1
+        else:
+            down += 1
+    return IpsecTunnelCounts(len(entries), up, down)
+
+
+def _ipsec_entries(ipsec_xml: Any) -> list[Any]:
+    """Return XML elements that represent IPsec tunnel/SA rows."""
+    for name in (
+        "ipsec-security-associations-block",
+        "ipsec-security-association",
+        "ipsec-sa",
+    ):
+        entries = _descendants(ipsec_xml, name)
+        if entries:
+            return entries
+    return []
+
+
+def _chassis_cluster_enabled(cluster_xml: Any | None) -> bool | None:
+    """Return whether chassis cluster data is present."""
+    if cluster_xml is None:
+        return None
+    if _descendants(cluster_xml, "chassis-cluster-status"):
+        return True
+    if _descendants(cluster_xml, "redundancy-group"):
+        return True
+    return None
+
+
+def _chassis_cluster_rg_status(cluster_xml: Any | None) -> str | None:
+    """Return a compact redundancy group status summary."""
+    if cluster_xml is None:
+        return None
+
+    groups = _descendants(cluster_xml, "redundancy-group")
+    if not groups:
+        return _first_text_any(
+            cluster_xml,
+            ("cluster-status", "chassis-cluster-status", "status"),
+        )
+
+    summaries: list[str] = []
+    for index, group in enumerate(groups):
+        group_id = _first_text_any(
+            group,
+            ("redundancy-group-id", "group-id", "id", "name"),
+        ) or str(index)
+        status = _first_text_any(group, ("status", "state", "failover-mode"))
+        primary = _first_text_any(
+            group,
+            ("primary-node", "primary", "master-node", "master"),
+        )
+        parts = [f"RG {group_id}"]
+        if status:
+            parts.append(status)
+        if primary:
+            parts.append(f"primary {primary}")
+        summaries.append(": ".join((parts[0], ", ".join(parts[1:]))))
+    return "; ".join(summaries)
 
 
 def _log_missing_metrics(data: JunosData, re_xml: Any, uptime_xml: Any | None) -> None:

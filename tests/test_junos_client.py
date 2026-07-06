@@ -84,6 +84,42 @@ ALARM_XML = """\
 </rpc-reply>
 """
 
+FLOW_XML = """\
+<rpc-reply xmlns:junos="http://xml.juniper.net/junos/23.2R2.21/junos">
+    <flow-session-information>
+        <flow-session-summary>
+            <active-sessions>0</active-sessions>
+            <max-sessions>262144</max-sessions>
+        </flow-session-summary>
+    </flow-session-information>
+</rpc-reply>
+"""
+
+IPSEC_XML = """\
+<rpc-reply xmlns:junos="http://xml.juniper.net/junos/23.2R2.21/junos">
+    <ipsec-security-associations-information>
+        <ipsec-security-associations-block>
+            <sa-block-state>UP</sa-block-state>
+        </ipsec-security-associations-block>
+        <ipsec-security-associations-block>
+            <sa-block-state>DOWN</sa-block-state>
+        </ipsec-security-associations-block>
+    </ipsec-security-associations-information>
+</rpc-reply>
+"""
+
+CLUSTER_XML = """\
+<rpc-reply xmlns:junos="http://xml.juniper.net/junos/23.2R2.21/junos">
+    <chassis-cluster-status>
+        <redundancy-group>
+            <redundancy-group-id>0</redundancy-group-id>
+            <status>primary</status>
+            <primary-node>node0</primary-node>
+        </redundancy-group>
+    </chassis-cluster-status>
+</rpc-reply>
+"""
+
 
 class JunosParserTest(TestCase):
     """Tests for Junos XML parsing."""
@@ -101,3 +137,26 @@ class JunosParserTest(TestCase):
         self.assertEqual(data.re_cpu_idle, 32)
         self.assertEqual(data.re_memory_usage, 33)
         self.assertEqual(data.uptime, "395 days, 20 hours, 11 minutes, 20 seconds")
+
+    def test_parse_optional_srx_metrics(self) -> None:
+        """Parse optional SRX flow, IPsec, and chassis cluster metrics."""
+        data = parse_junos_data(
+            ET.fromstring(SYSTEM_XML),
+            ET.fromstring(ROUTE_ENGINE_XML),
+            ET.fromstring(ALARM_XML),
+            flow_xml=ET.fromstring(FLOW_XML),
+            ipsec_xml=ET.fromstring(IPSEC_XML),
+            cluster_xml=ET.fromstring(CLUSTER_XML),
+            fallback_host="192.0.2.1",
+        )
+
+        self.assertEqual(data.active_flow_sessions, 0)
+        self.assertEqual(data.max_flow_sessions, 262144)
+        self.assertEqual(data.ipsec_tunnel_count, 2)
+        self.assertEqual(data.ipsec_tunnels_up, 1)
+        self.assertEqual(data.ipsec_tunnels_down, 1)
+        self.assertTrue(data.chassis_cluster_enabled)
+        self.assertEqual(
+            data.chassis_cluster_redundancy_group_status,
+            "RG 0: primary, primary node0",
+        )

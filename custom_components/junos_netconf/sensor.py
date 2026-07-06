@@ -27,6 +27,7 @@ class JunosSensorDescription:
     value_fn: Callable[[JunosData], int | str | None]
     native_unit_of_measurement: str | None = None
     state_class: SensorStateClass | None = None
+    optional: bool = False
 
 
 SENSORS: tuple[JunosSensorDescription, ...] = (
@@ -66,6 +67,57 @@ SENSORS: tuple[JunosSensorDescription, ...] = (
     ),
 )
 
+SRX_SENSORS: tuple[JunosSensorDescription, ...] = (
+    JunosSensorDescription(
+        "active_flow_sessions",
+        "Active Flow Sessions",
+        lambda data: data.active_flow_sessions,
+        None,
+        SensorStateClass.MEASUREMENT,
+        True,
+    ),
+    JunosSensorDescription(
+        "max_flow_sessions",
+        "Max Flow Sessions",
+        lambda data: data.max_flow_sessions,
+        None,
+        SensorStateClass.MEASUREMENT,
+        True,
+    ),
+    JunosSensorDescription(
+        "ipsec_vpn_tunnel_count",
+        "IPsec VPN Tunnel Count",
+        lambda data: data.ipsec_tunnel_count,
+        None,
+        SensorStateClass.MEASUREMENT,
+        True,
+    ),
+    JunosSensorDescription(
+        "ipsec_tunnels_up",
+        "IPsec Tunnels Up",
+        lambda data: data.ipsec_tunnels_up,
+        None,
+        SensorStateClass.MEASUREMENT,
+        True,
+    ),
+    JunosSensorDescription(
+        "ipsec_tunnels_down",
+        "IPsec Tunnels Down",
+        lambda data: data.ipsec_tunnels_down,
+        None,
+        SensorStateClass.MEASUREMENT,
+        True,
+    ),
+    JunosSensorDescription(
+        "chassis_cluster_redundancy_group_status",
+        "Chassis Cluster Redundancy Group Status",
+        lambda data: data.chassis_cluster_redundancy_group_status,
+        None,
+        None,
+        True,
+    ),
+)
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -74,8 +126,14 @@ async def async_setup_entry(
 ) -> None:
     """Set up Junos NETCONF sensors."""
     coordinator: JunosNetconfCoordinator = entry.runtime_data
+    descriptions = list(SENSORS)
+    descriptions.extend(
+        description
+        for description in SRX_SENSORS
+        if description.value_fn(coordinator.data) is not None
+    )
     async_add_entities(
-        JunosSensor(coordinator, entry, description) for description in SENSORS
+        JunosSensor(coordinator, entry, description) for description in descriptions
     )
 
 
