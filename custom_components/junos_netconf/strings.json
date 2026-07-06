@@ -1,0 +1,37 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Junos NETCONF",
+        "description": "Connect to a Junos device using read-only NETCONF over SSH.",
+        "data": {
+          "host": "Host",
+          "port": "NETCONF port",
+          "username": "Username",
+          "password": "Password",
+          "timeout": "Timeout in seconds",
+          "verify_hostkey": "Verify SSH host key",
+          "scan_interval": "Polling interval in seconds"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not connect to the Junos NETCONF service.",
+      "invalid_auth": "The NETCONF username or password was rejected.",
+      "unknown": "Unexpected error."
+    },
+    "abort": {
+      "already_configured": "This Junos device is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Junos NETCONF options",
+        "data": {
+          "scan_interval": "Polling interval in seconds"
+        }
+      }
+    }
+  }
+}
