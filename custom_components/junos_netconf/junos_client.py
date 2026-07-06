@@ -58,6 +58,7 @@ class JunosPyEzClient:
         """Open a NETCONF session, collect read-only data, and close it."""
         dev = self._device()
         try:
+            _LOGGER.debug("Opening Junos NETCONF session to %s:%s", self.host, self.port)
             dev.open()
             system_xml = dev.rpc.get_system_information()
             re_xml = dev.rpc.get_route_engine_information()
@@ -66,9 +67,13 @@ class JunosPyEzClient:
         except ConnectAuthError as err:
             raise JunosNetconfAuthError("NETCONF authentication failed") from err
         except (ConnectError, ConnectRefusedError, ConnectTimeoutError, RpcError) as err:
-            raise JunosNetconfConnectionError(str(err)) from err
+            message = _exception_message(err)
+            _LOGGER.warning("Junos NETCONF connection failed: %s", message)
+            raise JunosNetconfConnectionError(message) from err
         except OSError as err:
-            raise JunosNetconfConnectionError(str(err)) from err
+            message = _exception_message(err)
+            _LOGGER.warning("Junos NETCONF socket failure: %s", message)
+            raise JunosNetconfConnectionError(message) from err
         finally:
             try:
                 dev.close()
@@ -152,3 +157,11 @@ def _first_int(root: Any, name: str) -> int | None:
         return int(value.replace("%", "").strip())
     except ValueError:
         return None
+
+
+def _exception_message(err: Exception) -> str:
+    """Return a useful PyEZ/ncclient/Paramiko error message."""
+    original = getattr(err, "_orig", None)
+    if original is not None:
+        return f"{err.__class__.__name__}: {err}; original={original.__class__.__name__}: {original}"
+    return f"{err.__class__.__name__}: {err}"

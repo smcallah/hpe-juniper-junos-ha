@@ -84,7 +84,7 @@ class JunosNetconfConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             except JunosNetconfAuthError:
                 errors["base"] = "invalid_auth"
             except JunosNetconfConnectionError as err:
-                _LOGGER.debug("Junos NETCONF connection validation failed: %s", err)
+                _LOGGER.warning("Junos NETCONF connection validation failed: %s", err)
                 errors["base"] = "cannot_connect"
             except Exception as err:
                 _LOGGER.exception("Unexpected Junos NETCONF config flow error: %s", err)

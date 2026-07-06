@@ -9,5 +9,5 @@
   "issue_tracker": "https://github.com/smcallah/hpe-juniper-junos-ha/issues",
   "loggers": ["jnpr", "ncclient", "paramiko"],
   "requirements": ["junos-eznc==2.8.2"],
-  "version": "0.1.1"
+  "version": "0.1.2"
 }
