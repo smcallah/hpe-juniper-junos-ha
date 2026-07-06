@@ -1,12 +1,12 @@
 {
   "domain": "junos_netconf",
   "name": "Junos NETCONF",
-  "codeowners": [],
+  "codeowners": ["@smcallah"],
   "config_flow": true,
-  "documentation": "https://github.com/smcal/hpe-juniper-junos-ha",
+  "documentation": "https://github.com/smcallah/hpe-juniper-junos-ha",
   "integration_type": "hub",
   "iot_class": "local_polling",
-  "issue_tracker": "https://github.com/smcal/hpe-juniper-junos-ha/issues",
+  "issue_tracker": "https://github.com/smcallah/hpe-juniper-junos-ha/issues",
   "loggers": ["jnpr", "ncclient", "paramiko"],
   "requirements": ["junos-eznc==2.8.2"],
   "version": "0.1.0"
