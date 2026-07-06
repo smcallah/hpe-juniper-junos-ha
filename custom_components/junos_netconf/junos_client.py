@@ -67,13 +67,15 @@ class JunosPyEzClient:
             )
             re_xml = dev.rpc.get_route_engine_information()
             alarm_xml = dev.rpc.get_alarm_information()
-            return parse_junos_data(
+            data = parse_junos_data(
                 system_xml,
                 re_xml,
                 alarm_xml,
                 uptime_xml=uptime_xml,
                 fallback_host=self.host,
             )
+            _log_missing_metrics(data, re_xml, uptime_xml)
+            return data
         except ConnectAuthError as err:
             raise JunosNetconfAuthError("NETCONF authentication failed") from err
         except (ConnectError, ConnectRefusedError, ConnectTimeoutError, RpcError) as err:
@@ -210,6 +212,55 @@ def _first_uptime(system_xml: Any, uptime_xml: Any | None, re_xml: Any) -> str |
         or _first_text_any(uptime_xml, ("up-time", "uptime", "time-length"))
         or _first_text_any(re_xml, ("up-time", "uptime"))
     )
+
+
+def _log_missing_metrics(data: JunosData, re_xml: Any, uptime_xml: Any | None) -> None:
+    """Log useful XML context when expected MVP metrics are missing."""
+    missing = []
+    if data.re_cpu_idle is None:
+        missing.append("routing_engine_cpu_idle")
+    if data.re_memory_usage is None:
+        missing.append("routing_engine_memory_usage")
+    if data.uptime is None:
+        missing.append("uptime")
+
+    if not missing:
+        _LOGGER.debug(
+            "Parsed Junos metrics: uptime=%s re_cpu_idle=%s re_memory_usage=%s",
+            data.uptime,
+            data.re_cpu_idle,
+            data.re_memory_usage,
+        )
+        return
+
+    _LOGGER.warning(
+        "Missing Junos metrics %s. route-engine tags=%s uptime tags=%s",
+        ", ".join(missing),
+        _child_tag_summary(re_xml, "route-engine"),
+        _tag_summary(uptime_xml),
+    )
+
+
+def _child_tag_summary(root: Any, parent_name: str) -> list[str]:
+    """Return direct child tag names for the first matching parent."""
+    parents = _descendants(root, parent_name)
+    if not parents:
+        return _tag_summary(root)
+    return [_local_name(str(child.tag)) for child in list(parents[0])]
+
+
+def _tag_summary(root: Any) -> list[str]:
+    """Return a compact list of local XML tag names."""
+    if root is None:
+        return []
+    tags: list[str] = []
+    for node in root.iter():
+        name = _local_name(str(node.tag))
+        if name not in tags:
+            tags.append(name)
+        if len(tags) >= 40:
+            break
+    return tags
 
 
 def _exception_message(err: Exception) -> str:
