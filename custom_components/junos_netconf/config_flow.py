@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any
 import logging
+from typing import Any
 
 import voluptuous as vol
 
@@ -11,6 +11,7 @@ from homeassistant import config_entries
 from homeassistant.const import CONF_PASSWORD, CONF_PORT, CONF_USERNAME
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResult
+from homeassistant.helpers import selector
 
 from .const import (
     CONF_HOST,
@@ -38,7 +39,9 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
             vol.Range(min=1, max=65535),
         ),
         vol.Required(CONF_USERNAME): str,
-        vol.Required(CONF_PASSWORD): str,
+        vol.Required(CONF_PASSWORD): selector.TextSelector(
+            selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
+        ),
         vol.Optional(CONF_TIMEOUT, default=DEFAULT_TIMEOUT): vol.All(
             vol.Coerce(int),
             vol.Range(min=MIN_TIMEOUT),
@@ -63,7 +66,7 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> str:
         verify_hostkey=data[CONF_VERIFY_HOSTKEY],
     )
     device = await hass.async_add_executor_job(client.get_data)
-    return device.serial_number or device.hostname or data[CONF_HOST]
+    return device.serial_number or device.hostname or f"{data[CONF_HOST]}:{data[CONF_PORT]}"
 
 
 class JunosNetconfConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):

@@ -2,8 +2,10 @@
 
 from datetime import timedelta
 
+from homeassistant.const import Platform
+
 DOMAIN = "junos_netconf"
-PLATFORMS = ["sensor", "binary_sensor"]
+PLATFORMS = (Platform.SENSOR, Platform.BINARY_SENSOR)
 
 CONF_HOST = "host"
 CONF_PORT = "port"

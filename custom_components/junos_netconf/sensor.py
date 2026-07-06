@@ -73,7 +73,7 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Junos NETCONF sensors."""
-    coordinator: JunosNetconfCoordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator: JunosNetconfCoordinator = entry.runtime_data
     async_add_entities(
         JunosSensor(coordinator, entry, description) for description in SENSORS
     )
@@ -94,7 +94,7 @@ class JunosSensor(CoordinatorEntity[JunosNetconfCoordinator], SensorEntity):
         super().__init__(coordinator)
         self.entry = entry
         self.description = description
-        self._attr_unique_id = f"{entry.unique_id}_{description.key}"
+        self._attr_unique_id = f"{_entry_uid(entry)}_{description.key}"
         self._attr_name = description.name
         self._attr_native_unit_of_measurement = description.native_unit_of_measurement
         self._attr_state_class = description.state_class
@@ -109,10 +109,15 @@ class JunosSensor(CoordinatorEntity[JunosNetconfCoordinator], SensorEntity):
         """Return Home Assistant device registry information."""
         data = self.coordinator.data
         return DeviceInfo(
-            identifiers={(DOMAIN, self.entry.unique_id or self.entry.entry_id)},
+            identifiers={(DOMAIN, _entry_uid(self.entry))},
             manufacturer="Juniper Networks / HPE",
             model=data.model,
             name=data.hostname,
             serial_number=data.serial_number,
             sw_version=data.version,
         )
+
+
+def _entry_uid(entry: ConfigEntry) -> str:
+    """Return the stable config-entry unique identifier."""
+    return entry.unique_id or entry.entry_id

@@ -39,6 +39,7 @@ class JunosNetconfCoordinator(DataUpdateCoordinator[JunosData]):
             config_entry=entry,
             name=f"{DOMAIN}_{entry.entry_id}",
             update_interval=timedelta(seconds=interval),
+            always_update=False,
         )
         self.client = client
 
@@ -50,3 +51,5 @@ class JunosNetconfCoordinator(DataUpdateCoordinator[JunosData]):
             raise ConfigEntryAuthFailed(str(err)) from err
         except JunosNetconfConnectionError as err:
             raise UpdateFailed(str(err)) from err
+        except Exception as err:
+            raise UpdateFailed(f"Unexpected Junos NETCONF error: {err}") from err

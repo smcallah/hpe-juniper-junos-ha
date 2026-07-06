@@ -31,7 +31,7 @@ class JunosData:
     uptime: str | None
     re_cpu_idle: int | None
     re_memory_usage: int | None
-    chassis_alarm_count: int
+    chassis_alarm_count: int | None
 
 
 class JunosPyEzClient:
@@ -60,13 +60,22 @@ class JunosPyEzClient:
         try:
             _LOGGER.debug("Opening Junos NETCONF session to %s:%s", self.host, self.port)
             dev.open()
-            system_xml = dev.rpc.get_system_information()
+            system_xml = self._optional_rpc(
+                "get-system-information",
+                dev.rpc.get_system_information,
+            )
             uptime_xml = self._optional_rpc(
                 "get-system-uptime-information",
                 dev.rpc.get_system_uptime_information,
             )
-            re_xml = dev.rpc.get_route_engine_information()
-            alarm_xml = dev.rpc.get_alarm_information()
+            re_xml = self._optional_rpc(
+                "get-route-engine-information",
+                dev.rpc.get_route_engine_information,
+            )
+            alarm_xml = self._optional_rpc(
+                "get-alarm-information",
+                dev.rpc.get_alarm_information,
+            )
             data = parse_junos_data(
                 system_xml,
                 re_xml,
@@ -87,10 +96,7 @@ class JunosPyEzClient:
             _LOGGER.warning("Junos NETCONF socket failure: %s", message)
             raise JunosNetconfConnectionError(message) from err
         finally:
-            try:
-                dev.close()
-            except Exception as err:  # Best effort cleanup; do not mask poll errors.
-                _LOGGER.debug("Error closing Junos NETCONF session: %s", err)
+            self._close(dev)
 
     def _device(self) -> Device:
         """Build a PyEZ Device object without enabling write/config actions."""
@@ -122,6 +128,15 @@ class JunosPyEzClient:
             _LOGGER.debug("Optional Junos RPC %s failed: %s", rpc_name, err)
             return None
 
+    def _close(self, dev: Device) -> None:
+        """Close the PyEZ session without masking the original failure."""
+        if not getattr(dev, "connected", False):
+            return
+        try:
+            dev.close()
+        except Exception as err:
+            _LOGGER.debug("Error closing Junos NETCONF session: %s", err)
+
 
 def parse_junos_data(
     system_xml: Any,
@@ -148,7 +163,7 @@ def parse_junos_data(
                 "memory-heap-utilization",
             ),
         ),
-        chassis_alarm_count=len(_descendants(alarm_xml, "alarm-detail")),
+        chassis_alarm_count=_alarm_count(alarm_xml),
     )
 
 
@@ -212,6 +227,13 @@ def _first_uptime(system_xml: Any, uptime_xml: Any | None, re_xml: Any) -> str |
         or _first_text_any(uptime_xml, ("up-time", "uptime", "time-length"))
         or _first_text_any(re_xml, ("up-time", "uptime"))
     )
+
+
+def _alarm_count(alarm_xml: Any | None) -> int | None:
+    """Return alarm count, or None when alarm RPC data is unavailable."""
+    if alarm_xml is None:
+        return None
+    return len(_descendants(alarm_xml, "alarm-detail"))
 
 
 def _log_missing_metrics(data: JunosData, re_xml: Any, uptime_xml: Any | None) -> None:

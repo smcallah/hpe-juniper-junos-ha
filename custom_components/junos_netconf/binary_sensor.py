@@ -22,7 +22,7 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Junos NETCONF binary sensors."""
-    coordinator: JunosNetconfCoordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator: JunosNetconfCoordinator = entry.runtime_data
     async_add_entities([JunosChassisAlarmBinarySensor(coordinator, entry)])
 
 
@@ -40,22 +40,30 @@ class JunosChassisAlarmBinarySensor(
         """Initialize the binary sensor."""
         super().__init__(coordinator)
         self.entry = entry
-        self._attr_unique_id = f"{entry.unique_id}_chassis_alarm_present"
+        self._attr_unique_id = f"{_entry_uid(entry)}_chassis_alarm_present"
 
     @property
-    def is_on(self) -> bool:
+    def is_on(self) -> bool | None:
         """Return true when one or more chassis alarms are present."""
-        return self.coordinator.data.chassis_alarm_count > 0
+        alarm_count = self.coordinator.data.chassis_alarm_count
+        if alarm_count is None:
+            return None
+        return alarm_count > 0
 
     @property
     def device_info(self) -> DeviceInfo:
         """Return Home Assistant device registry information."""
         data = self.coordinator.data
         return DeviceInfo(
-            identifiers={(DOMAIN, self.entry.unique_id or self.entry.entry_id)},
+            identifiers={(DOMAIN, _entry_uid(self.entry))},
             manufacturer="Juniper Networks / HPE",
             model=data.model,
             name=data.hostname,
             serial_number=data.serial_number,
             sw_version=data.version,
         )
+
+
+def _entry_uid(entry: ConfigEntry) -> str:
+    """Return the stable config-entry unique identifier."""
+    return entry.unique_id or entry.entry_id
