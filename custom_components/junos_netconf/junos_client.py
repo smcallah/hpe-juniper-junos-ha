@@ -81,9 +81,12 @@ class JunosPyEzClient:
             "host": self.host,
             "port": self.port,
             "user": self.username,
-            "password": self.password,
+            "passwd": self.password,
+            "conn_open_timeout": self.timeout,
             "timeout": self.timeout,
             "gather_facts": False,
+            "allow_agent": False,
+            "look_for_keys": False,
         }
 
         kwargs["hostkey_verify"] = self.verify_hostkey

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+import logging
 
 import voluptuous as vol
 
@@ -25,6 +26,8 @@ from .const import (
 )
 from .exceptions import JunosNetconfAuthError, JunosNetconfConnectionError
 from .junos_client import JunosPyEzClient
+
+_LOGGER = logging.getLogger(__name__)
 
 
 STEP_USER_DATA_SCHEMA = vol.Schema(
@@ -80,9 +83,11 @@ class JunosNetconfConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 unique_id = await validate_input(self.hass, user_input)
             except JunosNetconfAuthError:
                 errors["base"] = "invalid_auth"
-            except JunosNetconfConnectionError:
+            except JunosNetconfConnectionError as err:
+                _LOGGER.debug("Junos NETCONF connection validation failed: %s", err)
                 errors["base"] = "cannot_connect"
-            except Exception:
+            except Exception as err:
+                _LOGGER.exception("Unexpected Junos NETCONF config flow error: %s", err)
                 errors["base"] = "unknown"
             else:
                 await self.async_set_unique_id(unique_id)
