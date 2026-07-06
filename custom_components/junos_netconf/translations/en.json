@@ -3,14 +3,14 @@
     "step": {
       "user": {
         "title": "Junos NETCONF",
-        "description": "Connect to a Junos device using read-only NETCONF over SSH.",
+        "description": "Connect to a Junos device using read-only NETCONF over SSH. Leave host-key verification off unless Home Assistant already trusts this device's SSH host key.",
         "data": {
           "host": "Host",
           "port": "NETCONF port",
           "username": "Username",
           "password": "Password",
           "timeout": "Timeout in seconds",
-          "verify_hostkey": "Verify SSH host key",
+          "verify_hostkey": "Require pre-trusted SSH host key",
           "scan_interval": "Polling interval in seconds"
         }
       }

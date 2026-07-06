@@ -12,18 +12,18 @@ Place the integration here:
 
 ```text
 /config/custom_components/junos_netconf/
-├── __init__.py
-├── binary_sensor.py
-├── config_flow.py
-├── const.py
-├── coordinator.py
-├── exceptions.py
-├── junos_client.py
-├── manifest.json
-├── sensor.py
-├── strings.json
-└── translations/
-    └── en.json
+|-- __init__.py
+|-- binary_sensor.py
+|-- config_flow.py
+|-- const.py
+|-- coordinator.py
+|-- exceptions.py
+|-- junos_client.py
+|-- manifest.json
+|-- sensor.py
+|-- strings.json
+`-- translations/
+    `-- en.json
 ```
 
 ## Entities
@@ -79,8 +79,20 @@ radius: operational show/RPC access only.
    - username
    - password
    - timeout, default `15`
-   - SSH host-key verification preference
+   - host-key verification preference
    - polling interval, default `60`
+
+## Host-key verification
+
+Leave **Require pre-trusted SSH host key** unchecked unless the Junos device's
+SSH host key is already trusted by the Home Assistant environment. This option
+does not fetch or accept a new host key interactively. If it is enabled before
+the host key is trusted, the SSH session can fail before username/password
+authentication.
+
+For initial setup and lab use, keep it unchecked. After the integration works,
+you can pre-load the device host key into the environment used by Home Assistant
+and then enable this option.
 
 ## RPCs used
 
