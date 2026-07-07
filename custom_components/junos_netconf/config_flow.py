@@ -15,6 +15,7 @@ from homeassistant.helpers import selector
 
 from .const import (
     CONF_HOST,
+    CONF_INTERFACE_ALLOWLIST,
     CONF_SCAN_INTERVAL,
     CONF_TIMEOUT,
     CONF_VERIFY_HOSTKEY,
@@ -50,6 +51,9 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
         vol.Optional(CONF_SCAN_INTERVAL, default=DEFAULT_SCAN_INTERVAL): vol.All(
             vol.Coerce(int),
             vol.Range(min=MIN_SCAN_INTERVAL),
+        ),
+        vol.Optional(CONF_INTERFACE_ALLOWLIST, default=""): selector.TextSelector(
+            selector.TextSelectorConfig(multiline=True)
         ),
     }
 )
@@ -125,13 +129,17 @@ class JunosNetconfOptionsFlow(config_entries.OptionsFlow):
         self,
         user_input: dict[str, Any] | None = None,
     ) -> FlowResult:
-        """Manage polling interval options."""
+        """Manage polling and interface allowlist options."""
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
 
         current_interval = self.config_entry.options.get(
             CONF_SCAN_INTERVAL,
             self.config_entry.data.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
+        )
+        current_allowlist = self.config_entry.options.get(
+            CONF_INTERFACE_ALLOWLIST,
+            self.config_entry.data.get(CONF_INTERFACE_ALLOWLIST, ""),
         )
         return self.async_show_form(
             step_id="init",
@@ -140,7 +148,13 @@ class JunosNetconfOptionsFlow(config_entries.OptionsFlow):
                     vol.Optional(
                         CONF_SCAN_INTERVAL,
                         default=current_interval,
-                    ): vol.All(vol.Coerce(int), vol.Range(min=MIN_SCAN_INTERVAL))
+                    ): vol.All(vol.Coerce(int), vol.Range(min=MIN_SCAN_INTERVAL)),
+                    vol.Optional(
+                        CONF_INTERFACE_ALLOWLIST,
+                        default=current_allowlist,
+                    ): selector.TextSelector(
+                        selector.TextSelectorConfig(multiline=True)
+                    ),
                 }
             ),
         )

@@ -14,6 +14,7 @@ CONF_PASSWORD = "password"
 CONF_TIMEOUT = "timeout"
 CONF_VERIFY_HOSTKEY = "verify_hostkey"
 CONF_SCAN_INTERVAL = "scan_interval"
+CONF_INTERFACE_ALLOWLIST = "interface_allowlist"
 
 DEFAULT_NETCONF_PORT = 830
 DEFAULT_SCAN_INTERVAL = 60

@@ -11,7 +11,8 @@
           "password": "Password",
           "timeout": "Timeout in seconds",
           "verify_hostkey": "Require pre-trusted SSH host key",
-          "scan_interval": "Polling interval in seconds"
+          "scan_interval": "Polling interval in seconds",
+          "interface_allowlist": "Interfaces to monitor"
         }
       }
     },
@@ -28,8 +29,10 @@
     "step": {
       "init": {
         "title": "Junos NETCONF options",
+        "description": "Leave interfaces blank to create no per-interface entities. Add exact interface names separated by spaces, commas, or new lines.",
         "data": {
-          "scan_interval": "Polling interval in seconds"
+          "scan_interval": "Polling interval in seconds",
+          "interface_allowlist": "Interfaces to monitor"
         }
       }
     }

@@ -30,24 +30,33 @@ Place the integration here:
 
 The MVP creates these entities:
 
-- `sensor.hostname`
-- `sensor.model`
-- `sensor.serial_number`
-- `sensor.junos_version`
 - `sensor.uptime`
 - `sensor.routing_engine_cpu_idle`
 - `sensor.routing_engine_memory_usage`
 - `binary_sensor.chassis_alarm_present`
 - `sensor.chassis_alarm_count`
-- `sensor.system_service_count`
-- `sensor.interface_count`
-- `sensor.interfaces_up`
-- `sensor.<interface>_interface_status`
-- `binary_sensor.<interface>_interface_up`
 - `binary_sensor.ssh_service_enabled`
 - `binary_sensor.netconf_ssh_service_enabled`
 - `binary_sensor.dhcp_local_server_enabled`
 - `binary_sensor.https_web_management_enabled`
+
+Hostname, model, serial number, and Junos version are used as Home Assistant
+device registry metadata, not exposed as standalone sensors.
+
+Per-interface entities are disabled by default. Add exact interface names to
+the integration options to create interface entities. For each selected
+interface, the integration creates only:
+
+- `binary_sensor.<interface>_link_up`
+- `sensor.<interface>_rx_mbps`
+- `sensor.<interface>_tx_mbps`
+- `sensor.<interface>_input_errors`
+- `sensor.<interface>_output_errors`
+
+Internal/system interfaces are skipped unless explicitly allowlisted by exact
+name, including `lo0`, `jsrv`, `dsc`, `gre`, `ipip`, `mtun`, `pimd`, `pime`,
+`tap`, `vlan`, `irb`, `lsi`, `pp`, `demux`, `pfe`, `pfh`, `cbp`, `em`, `fxp`,
+`mt`, `sp`, `fab`, and `rbeb`.
 
 The first device model is based on the real SRX320 `banana` configuration from
 the companion `juniper-configs` repository. It expects NETCONF over SSH, SSH,
@@ -141,3 +150,8 @@ Blocking PyEZ calls run through Home Assistant's executor via
 - Confirm values refresh after the default 60-second polling interval.
 - Trigger or simulate a chassis alarm and confirm alarm count and binary sensor
   change state.
+- Leave the interface allowlist blank and confirm no per-interface entities are
+  created.
+- Add one physical interface such as `ge-0/0/0` to the allowlist and confirm
+  only link, RX Mbps, TX Mbps, input errors, and output errors are created for
+  that interface.

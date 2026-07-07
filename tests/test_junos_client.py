@@ -217,6 +217,16 @@ INTERFACE_XML = """\
             <admin-status>up</admin-status>
             <oper-status>up</oper-status>
             <description>To: Cable Modem</description>
+            <traffic-statistics>
+                <input-bps>12500000</input-bps>
+                <output-bps>25000000</output-bps>
+            </traffic-statistics>
+            <input-error-list>
+                <input-errors>2</input-errors>
+            </input-error-list>
+            <output-error-list>
+                <output-errors>4</output-errors>
+            </output-error-list>
             <logical-interface>
                 <name>ge-0/0/0.0</name>
                 <admin-status>up</admin-status>
@@ -242,6 +252,10 @@ INTERFACE_XML = """\
                 <name>irb.100</name>
                 <admin-status>up</admin-status>
                 <oper-status>up</oper-status>
+                <traffic-statistics>
+                    <input-bps>1000000</input-bps>
+                    <output-bps>2000000</output-bps>
+                </traffic-statistics>
             </logical-interface>
         </physical-interface>
     </interface-information>
@@ -289,8 +303,8 @@ class JunosParserTest(TestCase):
             "RG 0: primary, primary node0",
         )
 
-    def test_parse_banana_configured_services_and_interfaces(self) -> None:
-        """Parse service and interface model from banana's real config shape."""
+    def test_parse_banana_configured_services_without_interface_allowlist(self) -> None:
+        """Do not create interface model rows unless interfaces are allowlisted."""
         data = parse_junos_data(
             None,
             ET.fromstring(ROUTE_ENGINE_XML),
@@ -312,14 +326,32 @@ class JunosParserTest(TestCase):
                 "web_management_https",
             ),
         )
+        self.assertEqual(data.interfaces, ())
 
+    def test_parse_allowlisted_interfaces_with_stats(self) -> None:
+        """Parse only explicitly selected interfaces and their useful counters."""
+        data = parse_junos_data(
+            None,
+            ET.fromstring(ROUTE_ENGINE_XML),
+            ET.fromstring(ALARM_XML),
+            config_xml=ET.fromstring(BANANA_CONFIG_XML),
+            interface_xml=ET.fromstring(INTERFACE_XML),
+            interface_allowlist=("ge-0/0/0", "irb.100"),
+            fallback_host="192.0.2.1",
+        )
         interfaces = {interface.name: interface for interface in data.interfaces}
         self.assertIn("ge-0/0/0", interfaces)
-        self.assertIn("ge-0/0/0.0", interfaces)
-        self.assertIn("ge-0/0/7", interfaces)
-        self.assertIn("dl0.0", interfaces)
         self.assertIn("irb.100", interfaces)
+        self.assertNotIn("ge-0/0/0.0", interfaces)
+        self.assertNotIn("ge-0/0/1", interfaces)
+        self.assertNotIn("ge-0/0/7", interfaces)
+        self.assertNotIn("dl0.0", interfaces)
         self.assertEqual(interfaces["ge-0/0/0"].description, "To: Cable Modem")
         self.assertTrue(interfaces["ge-0/0/0"].enabled)
-        self.assertFalse(interfaces["ge-0/0/1"].enabled)
+        self.assertEqual(interfaces["ge-0/0/0"].rx_mbps, 12.5)
+        self.assertEqual(interfaces["ge-0/0/0"].tx_mbps, 25.0)
+        self.assertEqual(interfaces["ge-0/0/0"].input_errors, 2)
+        self.assertEqual(interfaces["ge-0/0/0"].output_errors, 4)
         self.assertTrue(interfaces["irb.100"].enabled)
+        self.assertEqual(interfaces["irb.100"].rx_mbps, 1.0)
+        self.assertEqual(interfaces["irb.100"].tx_mbps, 2.0)

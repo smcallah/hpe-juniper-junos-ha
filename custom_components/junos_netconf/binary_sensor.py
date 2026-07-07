@@ -207,7 +207,7 @@ class JunosInterfaceEnabledBinarySensor(
         super().__init__(coordinator)
         self.entry = entry
         self.interface_name = interface_name
-        self._attr_name = f"{interface_name} Interface Up"
+        self._attr_name = f"{interface_name} Link Up"
         self._attr_unique_id = (
             f"{_entry_uid(entry)}_interface_{_slug(interface_name)}_up"
         )

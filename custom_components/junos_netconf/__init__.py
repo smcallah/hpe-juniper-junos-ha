@@ -8,6 +8,7 @@ from homeassistant.core import HomeAssistant
 
 from .const import (
     CONF_HOST,
+    CONF_INTERFACE_ALLOWLIST,
     CONF_TIMEOUT,
     CONF_VERIFY_HOSTKEY,
     PLATFORMS,
@@ -25,6 +26,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         password=entry.data[CONF_PASSWORD],
         timeout=entry.data[CONF_TIMEOUT],
         verify_hostkey=entry.data[CONF_VERIFY_HOSTKEY],
+        interface_allowlist=_interface_allowlist(entry),
     )
     coordinator = JunosNetconfCoordinator(hass, entry, client)
     await coordinator.async_config_entry_first_refresh()
@@ -43,3 +45,15 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 async def async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Reload the entry when options change."""
     await hass.config_entries.async_reload(entry.entry_id)
+
+
+def _interface_allowlist(entry: ConfigEntry) -> tuple[str, ...]:
+    """Return configured interface names from data/options."""
+    raw_value = entry.options.get(
+        CONF_INTERFACE_ALLOWLIST,
+        entry.data.get(CONF_INTERFACE_ALLOWLIST, ""),
+    )
+    if not isinstance(raw_value, str):
+        return ()
+    names = raw_value.replace(",", " ").split()
+    return tuple(dict.fromkeys(name.strip() for name in names if name.strip()))

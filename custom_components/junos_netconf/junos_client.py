@@ -19,6 +19,32 @@ from .exceptions import JunosNetconfAuthError, JunosNetconfConnectionError
 
 _LOGGER = logging.getLogger(__name__)
 
+INTERNAL_INTERFACE_PREFIXES = (
+    "lo0",
+    "jsrv",
+    "dsc",
+    "gre",
+    "ipip",
+    "mtun",
+    "pimd",
+    "pime",
+    "tap",
+    "vlan",
+    "irb",
+    "lsi",
+    "pp",
+    "demux",
+    "pfe",
+    "pfh",
+    "cbp",
+    "em",
+    "fxp",
+    "mt",
+    "sp",
+    "fab",
+    "rbeb",
+)
+
 
 @dataclass(frozen=True)
 class JunosData:
@@ -52,6 +78,10 @@ class JunosInterfaceState:
     admin_status: str | None
     oper_status: str | None
     enabled: bool | None
+    rx_mbps: float | None
+    tx_mbps: float | None
+    input_errors: int | None
+    output_errors: int | None
 
 
 @dataclass(frozen=True)
@@ -74,6 +104,7 @@ class JunosPyEzClient:
         password: str,
         timeout: int,
         verify_hostkey: bool,
+        interface_allowlist: tuple[str, ...] = (),
     ) -> None:
         """Store connection settings."""
         self.host = host
@@ -82,6 +113,7 @@ class JunosPyEzClient:
         self.password = password
         self.timeout = timeout
         self.verify_hostkey = verify_hostkey
+        self.interface_allowlist = interface_allowlist
 
     def get_data(self) -> JunosData:
         """Open a NETCONF session, collect read-only data, and close it."""
@@ -130,12 +162,7 @@ class JunosPyEzClient:
                 "get-configuration",
                 "get_config",
             )
-            interface_xml = self._optional_rpc(
-                dev,
-                "get-interface-information",
-                "get_interface_information",
-                terse=True,
-            )
+            interface_xml = self._interface_information(dev)
             data = parse_junos_data(
                 system_xml,
                 re_xml,
@@ -146,6 +173,7 @@ class JunosPyEzClient:
                 cluster_xml=cluster_xml,
                 config_xml=config_xml,
                 interface_xml=interface_xml,
+                interface_allowlist=self.interface_allowlist,
                 fallback_host=self.host,
             )
             _log_missing_metrics(data, re_xml, uptime_xml)
@@ -200,6 +228,21 @@ class JunosPyEzClient:
             _LOGGER.debug("Optional Junos RPC %s failed: %s", rpc_name, err)
             return None
 
+    def _interface_information(self, dev: Device) -> tuple[Any, ...]:
+        """Return detailed interface XML only for allowlisted interfaces."""
+        replies: list[Any] = []
+        for interface_name in self.interface_allowlist:
+            reply = self._optional_rpc(
+                dev,
+                f"get-interface-information {interface_name}",
+                "get_interface_information",
+                interface_name=interface_name,
+                extensive=True,
+            )
+            if reply is not None:
+                replies.append(reply)
+        return tuple(replies)
+
     def _close(self, dev: Device) -> None:
         """Close the PyEZ session without masking the original failure."""
         if not getattr(dev, "connected", False):
@@ -221,11 +264,12 @@ def parse_junos_data(
     cluster_xml: Any | None = None,
     config_xml: Any | None = None,
     interface_xml: Any | None = None,
+    interface_allowlist: tuple[str, ...] = (),
     fallback_host: str,
 ) -> JunosData:
     """Parse the Junos operational XML into a small, stable data model."""
     ipsec_counts = _ipsec_tunnel_counts(ipsec_xml)
-    interfaces = _interface_states(config_xml, interface_xml)
+    interfaces = _interface_states(config_xml, interface_xml, interface_allowlist)
     return JunosData(
         hostname=(
             _first_text_any(system_xml, ("host-name", "hostname"))
@@ -272,6 +316,11 @@ def _descendants(root: Any, name: str) -> list[Any]:
     """Return descendants matching a local XML element name."""
     if root is None:
         return []
+    if isinstance(root, tuple | list):
+        matches: list[Any] = []
+        for item in root:
+            matches.extend(_descendants(item, name))
+        return matches
     return [node for node in root.iter() if _local_name(str(node.tag)) == name]
 
 
@@ -409,12 +458,25 @@ def _configured_interface_names(config_xml: Any | None) -> set[str]:
 def _interface_states(
     config_xml: Any | None,
     interface_xml: Any | None,
+    interface_allowlist: tuple[str, ...],
 ) -> tuple[JunosInterfaceState, ...]:
-    """Return interface states for configured banana interfaces."""
-    configured_names = _configured_interface_names(config_xml)
+    """Return state for explicitly allowlisted interfaces only."""
+    selected_names = tuple(dict.fromkeys(interface_allowlist))
+    if not selected_names:
+        return ()
+
+    configured_names = {
+        name
+        for name in _configured_interface_names(config_xml)
+        if _is_selected_interface(name, selected_names)
+    }
     descriptions = _configured_interface_descriptions(config_xml)
     operational = _operational_interfaces(interface_xml)
-    names = sorted(configured_names | set(operational), key=_interface_sort_key)
+    names = sorted(
+        configured_names
+        | {name for name in operational if _is_selected_interface(name, selected_names)},
+        key=_interface_sort_key,
+    )
 
     states: list[JunosInterfaceState] = []
     for name in names:
@@ -430,6 +492,10 @@ def _interface_states(
                 admin_status=op_state.get("admin_status"),
                 oper_status=op_state.get("oper_status"),
                 enabled=enabled,
+                rx_mbps=_mbps_from_bps(op_state.get("input_bps")),
+                tx_mbps=_mbps_from_bps(op_state.get("output_bps")),
+                input_errors=_int_from_text(op_state.get("input_errors")),
+                output_errors=_int_from_text(op_state.get("output_errors")),
             )
         )
     return tuple(states)
@@ -462,6 +528,10 @@ def _operational_interfaces(
                 "description": _first_direct_text(physical, "description"),
                 "admin_status": _first_direct_text(physical, "admin-status"),
                 "oper_status": _first_direct_text(physical, "oper-status"),
+                "input_bps": _first_text(physical, "input-bps"),
+                "output_bps": _first_text(physical, "output-bps"),
+                "input_errors": _first_text(physical, "input-errors"),
+                "output_errors": _first_text(physical, "output-errors"),
             }
         for logical in _direct_children(physical, "logical-interface"):
             logical_name = _first_direct_text(logical, "name")
@@ -470,6 +540,10 @@ def _operational_interfaces(
                     "description": _first_direct_text(logical, "description"),
                     "admin_status": _first_direct_text(logical, "admin-status"),
                     "oper_status": _first_direct_text(logical, "oper-status"),
+                    "input_bps": _first_text(logical, "input-bps"),
+                    "output_bps": _first_text(logical, "output-bps"),
+                    "input_errors": _first_text(logical, "input-errors"),
+                    "output_errors": _first_text(logical, "output-errors"),
                 }
     return states
 
@@ -512,6 +586,42 @@ def _interface_sort_key(name: str) -> tuple[int, str]:
     if name.startswith("dl"):
         return (2, name)
     return (3, name)
+
+
+def _is_selected_interface(name: str, selected_names: tuple[str, ...]) -> bool:
+    """Return true when an interface is explicitly selected for HA entities."""
+    if name not in selected_names:
+        return False
+    if _is_internal_interface(name):
+        return name in selected_names
+    return True
+
+
+def _is_internal_interface(name: str) -> bool:
+    """Return true for Junos internal/system interface families."""
+    base_name = name.split(".", 1)[0]
+    return any(
+        base_name == prefix or base_name.startswith(f"{prefix}-")
+        for prefix in INTERNAL_INTERFACE_PREFIXES
+    )
+
+
+def _mbps_from_bps(value: str | None) -> float | None:
+    """Return megabits per second from a Junos bits-per-second string."""
+    bps = _int_from_text(value)
+    if bps is None:
+        return None
+    return round(bps / 1_000_000, 3)
+
+
+def _int_from_text(value: str | None) -> int | None:
+    """Return an integer from a text value, tolerating commas."""
+    if value is None:
+        return None
+    try:
+        return int(value.replace(",", "").strip())
+    except ValueError:
+        return None
 
 
 def _alarm_count(alarm_xml: Any | None) -> int | None:

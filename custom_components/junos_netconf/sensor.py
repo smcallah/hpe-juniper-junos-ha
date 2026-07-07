@@ -24,25 +24,13 @@ class JunosSensorDescription:
 
     key: str
     name: str
-    value_fn: Callable[[JunosData], int | str | None]
+    value_fn: Callable[[JunosData], float | int | str | None]
     native_unit_of_measurement: str | None = None
     state_class: SensorStateClass | None = None
     optional: bool = False
 
 
-SENSORS: tuple[JunosSensorDescription, ...] = (
-    JunosSensorDescription("hostname", "Hostname", lambda data: data.hostname),
-    JunosSensorDescription("model", "Model", lambda data: data.model),
-    JunosSensorDescription(
-        "serial_number",
-        "Serial Number",
-        lambda data: data.serial_number,
-    ),
-    JunosSensorDescription(
-        "junos_version",
-        "Junos Version",
-        lambda data: data.version,
-    ),
+DEVICE_SENSORS: tuple[JunosSensorDescription, ...] = (
     JunosSensorDescription("uptime", "Uptime", lambda data: data.uptime),
     JunosSensorDescription(
         "routing_engine_cpu_idle",
@@ -64,30 +52,6 @@ SENSORS: tuple[JunosSensorDescription, ...] = (
         lambda data: data.chassis_alarm_count,
         None,
         SensorStateClass.MEASUREMENT,
-    ),
-    JunosSensorDescription(
-        "system_service_count",
-        "System Service Count",
-        lambda data: len(data.system_services) if data.system_services else None,
-        None,
-        SensorStateClass.MEASUREMENT,
-        True,
-    ),
-    JunosSensorDescription(
-        "interface_count",
-        "Interface Count",
-        lambda data: len(data.interfaces) if data.interfaces else None,
-        None,
-        SensorStateClass.MEASUREMENT,
-        True,
-    ),
-    JunosSensorDescription(
-        "interfaces_up",
-        "Interfaces Up",
-        lambda data: _interfaces_up(data),
-        None,
-        SensorStateClass.MEASUREMENT,
-        True,
     ),
 )
 
@@ -150,7 +114,7 @@ async def async_setup_entry(
 ) -> None:
     """Set up Junos NETCONF sensors."""
     coordinator: JunosNetconfCoordinator = entry.runtime_data
-    descriptions = list(SENSORS)
+    descriptions = list(DEVICE_SENSORS)
     descriptions.extend(
         description
         for description in SRX_SENSORS
@@ -160,8 +124,9 @@ async def async_setup_entry(
         JunosSensor(coordinator, entry, description) for description in descriptions
     ]
     entities.extend(
-        JunosInterfaceStatusSensor(coordinator, entry, interface.name)
+        JunosInterfaceMetricSensor(coordinator, entry, interface.name, metric)
         for interface in coordinator.data.interfaces
+        for metric in INTERFACE_METRICS
     )
     async_add_entities(entities)
 
@@ -187,7 +152,7 @@ class JunosSensor(CoordinatorEntity[JunosNetconfCoordinator], SensorEntity):
         self._attr_state_class = description.state_class
 
     @property
-    def native_value(self) -> int | str | None:
+    def native_value(self) -> float | int | str | None:
         """Return the current sensor value."""
         return self.description.value_fn(self.coordinator.data)
 
@@ -197,11 +162,54 @@ class JunosSensor(CoordinatorEntity[JunosNetconfCoordinator], SensorEntity):
         return _device_info(self.coordinator.data, self.entry)
 
 
-class JunosInterfaceStatusSensor(
+@dataclass(frozen=True)
+class JunosInterfaceMetricDescription:
+    """Description for selected interface metric sensors."""
+
+    key: str
+    name: str
+    value_fn: Callable[[JunosInterfaceState], float | int | None]
+    native_unit_of_measurement: str | None = None
+    state_class: SensorStateClass | None = None
+
+
+INTERFACE_METRICS: tuple[JunosInterfaceMetricDescription, ...] = (
+    JunosInterfaceMetricDescription(
+        "rx_mbps",
+        "RX Mbps",
+        lambda interface: interface.rx_mbps,
+        "Mbit/s",
+        SensorStateClass.MEASUREMENT,
+    ),
+    JunosInterfaceMetricDescription(
+        "tx_mbps",
+        "TX Mbps",
+        lambda interface: interface.tx_mbps,
+        "Mbit/s",
+        SensorStateClass.MEASUREMENT,
+    ),
+    JunosInterfaceMetricDescription(
+        "input_errors",
+        "Input Errors",
+        lambda interface: interface.input_errors,
+        None,
+        SensorStateClass.TOTAL_INCREASING,
+    ),
+    JunosInterfaceMetricDescription(
+        "output_errors",
+        "Output Errors",
+        lambda interface: interface.output_errors,
+        None,
+        SensorStateClass.TOTAL_INCREASING,
+    ),
+)
+
+
+class JunosInterfaceMetricSensor(
     CoordinatorEntity[JunosNetconfCoordinator],
     SensorEntity,
 ):
-    """Report a compact admin/oper state for a Junos interface."""
+    """Report a selected Junos interface metric."""
 
     _attr_has_entity_name = True
 
@@ -210,38 +218,27 @@ class JunosInterfaceStatusSensor(
         coordinator: JunosNetconfCoordinator,
         entry: ConfigEntry,
         interface_name: str,
+        description: JunosInterfaceMetricDescription,
     ) -> None:
         """Initialize the sensor."""
         super().__init__(coordinator)
         self.entry = entry
         self.interface_name = interface_name
-        self._attr_name = f"{interface_name} Interface Status"
+        self.description = description
+        self._attr_name = f"{interface_name} {description.name}"
         self._attr_unique_id = (
-            f"{_entry_uid(entry)}_interface_{_slug(interface_name)}_status"
+            f"{_entry_uid(entry)}_interface_{_slug(interface_name)}_{description.key}"
         )
+        self._attr_native_unit_of_measurement = description.native_unit_of_measurement
+        self._attr_state_class = description.state_class
 
     @property
-    def native_value(self) -> str | None:
-        """Return admin/oper status for the interface."""
+    def native_value(self) -> float | int | None:
+        """Return the current interface metric value."""
         interface = self._interface()
         if interface is None:
             return None
-        if interface.admin_status and interface.oper_status:
-            return f"{interface.admin_status}/{interface.oper_status}"
-        return interface.oper_status or interface.admin_status
-
-    @property
-    def extra_state_attributes(self) -> dict[str, str | None]:
-        """Return interface details as attributes."""
-        interface = self._interface()
-        if interface is None:
-            return {}
-        return {
-            "interface": interface.name,
-            "description": interface.description,
-            "admin_status": interface.admin_status,
-            "oper_status": interface.oper_status,
-        }
+        return self.description.value_fn(interface)
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -259,13 +256,6 @@ class JunosInterfaceStatusSensor(
 def _entry_uid(entry: ConfigEntry) -> str:
     """Return the stable config-entry unique identifier."""
     return entry.unique_id or entry.entry_id
-
-
-def _interfaces_up(data: JunosData) -> int | None:
-    """Return count of interfaces with a known up state."""
-    if not data.interfaces:
-        return None
-    return sum(1 for interface in data.interfaces if interface.enabled is True)
 
 
 def _device_info(data: JunosData, entry: ConfigEntry) -> DeviceInfo:
