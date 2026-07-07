@@ -120,6 +120,134 @@ CLUSTER_XML = """\
 </rpc-reply>
 """
 
+BANANA_CONFIG_XML = """\
+<rpc-reply>
+    <configuration>
+        <version>23.2R2.21</version>
+        <system>
+            <host-name>banana</host-name>
+            <services>
+                <ssh>
+                    <protocol-version>v2</protocol-version>
+                    <sftp-server/>
+                </ssh>
+                <netconf>
+                    <ssh/>
+                </netconf>
+                <dhcp-local-server>
+                    <group>
+                        <name>jdhcp-group</name>
+                        <interface>irb.100</interface>
+                    </group>
+                </dhcp-local-server>
+                <web-management>
+                    <https>
+                        <system-generated-certificate/>
+                    </https>
+                </web-management>
+            </services>
+        </system>
+        <interfaces>
+            <interface>
+                <name>ge-0/0/0</name>
+                <description>To: Cable Modem</description>
+                <unit>
+                    <name>0</name>
+                    <family>
+                        <inet>
+                            <dhcp/>
+                        </inet>
+                    </family>
+                </unit>
+            </interface>
+            <interface>
+                <name>ge-0/0/1</name>
+                <description>To: TP-LINK Easy Smart Switch Port 8</description>
+                <unit>
+                    <name>0</name>
+                    <family>
+                        <ethernet-switching/>
+                    </family>
+                </unit>
+            </interface>
+            <interface>
+                <name>ge-0/0/7</name>
+                <description>To: PoE Switch Port 6</description>
+                <unit>
+                    <name>0</name>
+                    <family>
+                        <ethernet-switching/>
+                    </family>
+                </unit>
+            </interface>
+            <interface>
+                <name>dl0</name>
+                <unit>
+                    <name>0</name>
+                    <family>
+                        <inet>
+                            <negotiate-address/>
+                        </inet>
+                    </family>
+                </unit>
+            </interface>
+            <interface>
+                <name>irb</name>
+                <unit>
+                    <name>100</name>
+                    <family>
+                        <inet>
+                            <address>
+                                <name>192.168.0.1/24</name>
+                            </address>
+                        </inet>
+                    </family>
+                </unit>
+            </interface>
+        </interfaces>
+    </configuration>
+</rpc-reply>
+"""
+
+INTERFACE_XML = """\
+<rpc-reply>
+    <interface-information>
+        <physical-interface>
+            <name>ge-0/0/0</name>
+            <admin-status>up</admin-status>
+            <oper-status>up</oper-status>
+            <description>To: Cable Modem</description>
+            <logical-interface>
+                <name>ge-0/0/0.0</name>
+                <admin-status>up</admin-status>
+                <oper-status>up</oper-status>
+            </logical-interface>
+        </physical-interface>
+        <physical-interface>
+            <name>ge-0/0/1</name>
+            <admin-status>up</admin-status>
+            <oper-status>down</oper-status>
+            <description>To: TP-LINK Easy Smart Switch Port 8</description>
+            <logical-interface>
+                <name>ge-0/0/1.0</name>
+                <admin-status>up</admin-status>
+                <oper-status>down</oper-status>
+            </logical-interface>
+        </physical-interface>
+        <physical-interface>
+            <name>irb</name>
+            <admin-status>up</admin-status>
+            <oper-status>up</oper-status>
+            <logical-interface>
+                <name>irb.100</name>
+                <admin-status>up</admin-status>
+                <oper-status>up</oper-status>
+            </logical-interface>
+        </physical-interface>
+    </interface-information>
+</rpc-reply>
+"""
+
 
 class JunosParserTest(TestCase):
     """Tests for Junos XML parsing."""
@@ -160,3 +288,38 @@ class JunosParserTest(TestCase):
             data.chassis_cluster_redundancy_group_status,
             "RG 0: primary, primary node0",
         )
+
+    def test_parse_banana_configured_services_and_interfaces(self) -> None:
+        """Parse service and interface model from banana's real config shape."""
+        data = parse_junos_data(
+            None,
+            ET.fromstring(ROUTE_ENGINE_XML),
+            ET.fromstring(ALARM_XML),
+            config_xml=ET.fromstring(BANANA_CONFIG_XML),
+            interface_xml=ET.fromstring(INTERFACE_XML),
+            fallback_host="192.0.2.1",
+        )
+
+        self.assertEqual(data.hostname, "banana")
+        self.assertEqual(data.model, "srx320")
+        self.assertEqual(data.version, "23.2R2.21")
+        self.assertEqual(
+            data.system_services,
+            (
+                "ssh",
+                "netconf_ssh",
+                "dhcp_local_server",
+                "web_management_https",
+            ),
+        )
+
+        interfaces = {interface.name: interface for interface in data.interfaces}
+        self.assertIn("ge-0/0/0", interfaces)
+        self.assertIn("ge-0/0/0.0", interfaces)
+        self.assertIn("ge-0/0/7", interfaces)
+        self.assertIn("dl0.0", interfaces)
+        self.assertIn("irb.100", interfaces)
+        self.assertEqual(interfaces["ge-0/0/0"].description, "To: Cable Modem")
+        self.assertTrue(interfaces["ge-0/0/0"].enabled)
+        self.assertFalse(interfaces["ge-0/0/1"].enabled)
+        self.assertTrue(interfaces["irb.100"].enabled)

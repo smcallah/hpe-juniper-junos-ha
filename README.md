@@ -39,6 +39,21 @@ The MVP creates these entities:
 - `sensor.routing_engine_memory_usage`
 - `binary_sensor.chassis_alarm_present`
 - `sensor.chassis_alarm_count`
+- `sensor.system_service_count`
+- `sensor.interface_count`
+- `sensor.interfaces_up`
+- `sensor.<interface>_interface_status`
+- `binary_sensor.<interface>_interface_up`
+- `binary_sensor.ssh_service_enabled`
+- `binary_sensor.netconf_ssh_service_enabled`
+- `binary_sensor.dhcp_local_server_enabled`
+- `binary_sensor.https_web_management_enabled`
+
+The first device model is based on the real SRX320 `banana` configuration from
+the companion `juniper-configs` repository. It expects NETCONF over SSH, SSH,
+DHCP local server, HTTPS web management, SRX flow/session telemetry, route
+engine health, chassis alarms, and the configured WAN/trust/IRB/dialer
+interfaces from that device.
 
 Entity IDs may include the configured device name or Home Assistant suffixes if
 there are naming conflicts.
@@ -54,17 +69,19 @@ set system services netconf ssh
 Example read-only user configuration:
 
 ```text
-set system login class ha-monitor permissions view
-set system login class ha-monitor allow-commands "(show system information|show chassis routing-engine|show chassis alarms)"
+set system login class ha-monitor permissions [ view view-configuration ]
+set system login class ha-monitor allow-commands "(show system information|show system uptime|show chassis routing-engine|show chassis alarms|show security flow session summary|show interfaces terse|show configuration system services|show configuration interfaces)"
 set system login user ha-monitor uid 2001
 set system login user ha-monitor class ha-monitor
 set system login user ha-monitor authentication plain-text-password
 commit
 ```
 
-Depending on platform and Junos release, the built-in `view` permission may be
-enough by itself. The `allow-commands` example documents the intended blast
-radius: operational show/RPC access only.
+Depending on platform and Junos release, the built-in `view` and
+`view-configuration` permissions may be enough by themselves. The
+`allow-commands` example documents the intended blast radius: operational show
+access plus read-only configuration visibility for system services and
+interfaces.
 
 ## Install
 
@@ -101,8 +118,14 @@ read-only RPCs, and closes the session in a `finally` block:
 
 ```text
 get-system-information
+get-system-uptime-information
 get-route-engine-information
 get-alarm-information
+get-flow-session-information summary
+get-ipsec-security-associations-information
+get-chassis-cluster-status
+get-configuration
+get-interface-information terse
 ```
 
 Blocking PyEZ calls run through Home Assistant's executor via

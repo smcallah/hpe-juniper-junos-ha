@@ -39,6 +39,19 @@ class JunosData:
     ipsec_tunnels_down: int | None
     chassis_cluster_enabled: bool | None
     chassis_cluster_redundancy_group_status: str | None
+    system_services: tuple[str, ...]
+    interfaces: tuple[JunosInterfaceState, ...]
+
+
+@dataclass(frozen=True)
+class JunosInterfaceState:
+    """Parsed configured and operational interface state."""
+
+    name: str
+    description: str | None
+    admin_status: str | None
+    oper_status: str | None
+    enabled: bool | None
 
 
 @dataclass(frozen=True)
@@ -112,6 +125,17 @@ class JunosPyEzClient:
                 "get-chassis-cluster-status",
                 "get_chassis_cluster_status",
             )
+            config_xml = self._optional_rpc(
+                dev,
+                "get-configuration",
+                "get_config",
+            )
+            interface_xml = self._optional_rpc(
+                dev,
+                "get-interface-information",
+                "get_interface_information",
+                terse=True,
+            )
             data = parse_junos_data(
                 system_xml,
                 re_xml,
@@ -120,6 +144,8 @@ class JunosPyEzClient:
                 flow_xml=flow_xml,
                 ipsec_xml=ipsec_xml,
                 cluster_xml=cluster_xml,
+                config_xml=config_xml,
+                interface_xml=interface_xml,
                 fallback_host=self.host,
             )
             _log_missing_metrics(data, re_xml, uptime_xml)
@@ -193,15 +219,24 @@ def parse_junos_data(
     flow_xml: Any | None = None,
     ipsec_xml: Any | None = None,
     cluster_xml: Any | None = None,
+    config_xml: Any | None = None,
+    interface_xml: Any | None = None,
     fallback_host: str,
 ) -> JunosData:
     """Parse the Junos operational XML into a small, stable data model."""
     ipsec_counts = _ipsec_tunnel_counts(ipsec_xml)
+    interfaces = _interface_states(config_xml, interface_xml)
     return JunosData(
-        hostname=_first_text_any(system_xml, ("host-name", "hostname")) or fallback_host,
-        model=_first_text_any(system_xml, ("hardware-model", "model")),
+        hostname=(
+            _first_text_any(system_xml, ("host-name", "hostname"))
+            or _first_text_any(config_xml, ("host-name",))
+            or fallback_host
+        ),
+        model=_first_text_any(system_xml, ("hardware-model", "model"))
+        or _model_from_config(config_xml),
         serial_number=_first_text_any(system_xml, ("serial-number",)),
-        version=_first_text_any(system_xml, ("os-version", "junos-version")),
+        version=_first_text_any(system_xml, ("os-version", "junos-version"))
+        or _first_text_any(config_xml, ("version",)),
         uptime=_first_uptime(system_xml, uptime_xml, re_xml),
         re_cpu_idle=_first_int_any(re_xml, ("cpu-idle", "idle-cpu")),
         re_memory_usage=_first_int_any(
@@ -221,6 +256,8 @@ def parse_junos_data(
         ipsec_tunnels_down=ipsec_counts.down,
         chassis_cluster_enabled=_chassis_cluster_enabled(cluster_xml),
         chassis_cluster_redundancy_group_status=_chassis_cluster_rg_status(cluster_xml),
+        system_services=_system_services(config_xml),
+        interfaces=interfaces,
     )
 
 
@@ -299,6 +336,14 @@ def _first_available(*values: int | None) -> int | None:
     return None
 
 
+def _model_from_config(config_xml: Any | None) -> str | None:
+    """Return an SRX model inferred from banana's source-of-truth config shape."""
+    configured_interfaces = _configured_interface_names(config_xml)
+    if {"ge-0/0/0", "ge-0/0/7", "irb.100"}.issubset(configured_interfaces):
+        return "srx320"
+    return None
+
+
 def _first_uptime(system_xml: Any, uptime_xml: Any | None, re_xml: Any) -> str | None:
     """Return uptime from system, uptime, or routing-engine XML."""
     return (
@@ -306,6 +351,167 @@ def _first_uptime(system_xml: Any, uptime_xml: Any | None, re_xml: Any) -> str |
         or _first_text_any(uptime_xml, ("up-time", "uptime", "time-length"))
         or _first_text_any(re_xml, ("up-time", "uptime"))
     )
+
+
+def _system_services(config_xml: Any | None) -> tuple[str, ...]:
+    """Return configured system services useful as HA status entities."""
+    if config_xml is None:
+        return ()
+
+    services: list[str] = []
+    system_services = _first_descendant(config_xml, "services")
+    if system_services is None:
+        return ()
+
+    if _first_descendant(system_services, "ssh") is not None:
+        services.append("ssh")
+    netconf = _first_descendant(system_services, "netconf")
+    if netconf is not None and _first_descendant(netconf, "ssh") is not None:
+        services.append("netconf_ssh")
+    if _first_descendant(system_services, "dhcp-local-server") is not None:
+        services.append("dhcp_local_server")
+    web_management = _first_descendant(system_services, "web-management")
+    if (
+        web_management is not None
+        and _first_descendant(web_management, "https") is not None
+    ):
+        services.append("web_management_https")
+    return tuple(services)
+
+
+def _first_descendant(root: Any | None, name: str) -> Any | None:
+    """Return the first descendant matching a local XML element name."""
+    matches = _descendants(root, name)
+    if matches:
+        return matches[0]
+    return None
+
+
+def _configured_interface_names(config_xml: Any | None) -> set[str]:
+    """Return physical and logical interfaces configured on the device."""
+    names: set[str] = set()
+    interfaces = _first_descendant(config_xml, "interfaces")
+    if interfaces is None:
+        return names
+
+    for interface in _direct_children(interfaces, "interface"):
+        physical_name = _first_direct_text(interface, "name")
+        if not physical_name:
+            continue
+        names.add(physical_name)
+        for unit in _direct_children(interface, "unit"):
+            unit_name = _first_direct_text(unit, "name")
+            if unit_name is not None:
+                names.add(f"{physical_name}.{unit_name}")
+    return names
+
+
+def _interface_states(
+    config_xml: Any | None,
+    interface_xml: Any | None,
+) -> tuple[JunosInterfaceState, ...]:
+    """Return interface states for configured banana interfaces."""
+    configured_names = _configured_interface_names(config_xml)
+    descriptions = _configured_interface_descriptions(config_xml)
+    operational = _operational_interfaces(interface_xml)
+    names = sorted(configured_names | set(operational), key=_interface_sort_key)
+
+    states: list[JunosInterfaceState] = []
+    for name in names:
+        op_state = operational.get(name, {})
+        enabled = _interface_enabled(
+            op_state.get("admin_status"),
+            op_state.get("oper_status"),
+        )
+        states.append(
+            JunosInterfaceState(
+                name=name,
+                description=op_state.get("description") or descriptions.get(name),
+                admin_status=op_state.get("admin_status"),
+                oper_status=op_state.get("oper_status"),
+                enabled=enabled,
+            )
+        )
+    return tuple(states)
+
+
+def _configured_interface_descriptions(config_xml: Any | None) -> dict[str, str]:
+    """Return descriptions for configured physical interfaces."""
+    descriptions: dict[str, str] = {}
+    interfaces = _first_descendant(config_xml, "interfaces")
+    if interfaces is None:
+        return descriptions
+
+    for interface in _direct_children(interfaces, "interface"):
+        name = _first_direct_text(interface, "name")
+        description = _first_direct_text(interface, "description")
+        if name and description:
+            descriptions[name] = description
+    return descriptions
+
+
+def _operational_interfaces(
+    interface_xml: Any | None,
+) -> dict[str, dict[str, str | None]]:
+    """Return operational interface state indexed by physical/logical name."""
+    states: dict[str, dict[str, str | None]] = {}
+    for physical in _descendants(interface_xml, "physical-interface"):
+        name = _first_direct_text(physical, "name")
+        if name:
+            states[name] = {
+                "description": _first_direct_text(physical, "description"),
+                "admin_status": _first_direct_text(physical, "admin-status"),
+                "oper_status": _first_direct_text(physical, "oper-status"),
+            }
+        for logical in _direct_children(physical, "logical-interface"):
+            logical_name = _first_direct_text(logical, "name")
+            if logical_name:
+                states[logical_name] = {
+                    "description": _first_direct_text(logical, "description"),
+                    "admin_status": _first_direct_text(logical, "admin-status"),
+                    "oper_status": _first_direct_text(logical, "oper-status"),
+                }
+    return states
+
+
+def _interface_enabled(
+    admin_status: str | None,
+    oper_status: str | None,
+) -> bool | None:
+    """Return HA connectivity state from Junos interface status strings."""
+    if oper_status:
+        return oper_status.lower() == "up"
+    if admin_status:
+        return admin_status.lower() == "up"
+    return None
+
+
+def _direct_children(root: Any | None, name: str) -> list[Any]:
+    """Return direct children matching a local XML element name."""
+    if root is None:
+        return []
+    return [child for child in list(root) if _local_name(str(child.tag)) == name]
+
+
+def _first_direct_text(root: Any | None, name: str) -> str | None:
+    """Return stripped text for the first matching direct child."""
+    for child in _direct_children(root, name):
+        if child.text:
+            value = child.text.strip()
+            if value:
+                return value
+    return None
+
+
+def _interface_sort_key(name: str) -> tuple[int, str]:
+    """Sort physical Ethernet ports before logical and service interfaces."""
+    if name.startswith("ge-0/0/"):
+        return (0, name)
+    if name.startswith("irb."):
+        return (1, name)
+    if name.startswith("dl"):
+        return (2, name)
+    return (3, name)
 
 
 def _alarm_count(alarm_xml: Any | None) -> int | None:
