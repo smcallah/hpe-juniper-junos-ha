@@ -315,7 +315,7 @@ class JunosParserTest(TestCase):
         )
 
         self.assertEqual(data.hostname, "banana")
-        self.assertEqual(data.model, "srx320")
+        self.assertEqual(data.model, "SRX320")
         self.assertEqual(data.version, "23.2R2.21")
         self.assertEqual(
             data.system_services,

@@ -52,9 +52,9 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
             vol.Coerce(int),
             vol.Range(min=MIN_SCAN_INTERVAL),
         ),
-        vol.Optional(CONF_INTERFACE_ALLOWLIST, default=""): selector.TextSelector(
-            selector.TextSelectorConfig(multiline=True)
-        ),
+        vol.Optional(
+            CONF_INTERFACE_ALLOWLIST, default=""
+        ): selector.TextSelector(),
     }
 )
 
@@ -115,15 +115,11 @@ class JunosNetconfConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         config_entry: config_entries.ConfigEntry,
     ) -> config_entries.OptionsFlow:
         """Return the options flow."""
-        return JunosNetconfOptionsFlow(config_entry)
+        return JunosNetconfOptionsFlow()
 
 
 class JunosNetconfOptionsFlow(config_entries.OptionsFlow):
     """Handle Junos NETCONF options."""
-
-    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
-        """Initialize options flow."""
-        self.config_entry = config_entry
 
     async def async_step_init(
         self,
@@ -152,9 +148,7 @@ class JunosNetconfOptionsFlow(config_entries.OptionsFlow):
                     vol.Optional(
                         CONF_INTERFACE_ALLOWLIST,
                         default=current_allowlist,
-                    ): selector.TextSelector(
-                        selector.TextSelectorConfig(multiline=True)
-                    ),
+                    ): selector.TextSelector(),
                 }
             ),
         )

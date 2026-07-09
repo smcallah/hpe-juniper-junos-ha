@@ -389,7 +389,7 @@ def _model_from_config(config_xml: Any | None) -> str | None:
     """Return an SRX model inferred from banana's source-of-truth config shape."""
     configured_interfaces = _configured_interface_names(config_xml)
     if {"ge-0/0/0", "ge-0/0/7", "irb.100"}.issubset(configured_interfaces):
-        return "srx320"
+        return "SRX320"
     return None
 
 
