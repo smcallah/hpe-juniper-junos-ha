@@ -14,6 +14,7 @@ from jnpr.junos.exception import (
     ConnectTimeoutError,
     RpcError,
 )
+from lxml import etree
 
 from .exceptions import JunosNetconfAuthError, JunosNetconfConnectionError
 
@@ -46,6 +47,36 @@ INTERNAL_INTERFACE_PREFIXES = (
 )
 
 
+def _configuration_filter(interface_allowlist: tuple[str, ...]) -> Any:
+    """Build a narrow NETCONF subtree filter for configuration-derived state."""
+    configuration = etree.Element("configuration")
+    system = etree.SubElement(configuration, "system")
+    etree.SubElement(system, "host-name")
+    etree.SubElement(system, "services")
+
+    selected_interfaces: dict[str, set[str] | None] = {}
+    for interface_name in interface_allowlist:
+        physical_name, separator, unit_name = interface_name.partition(".")
+        if not separator:
+            selected_interfaces[physical_name] = None
+        elif physical_name not in selected_interfaces:
+            selected_interfaces[physical_name] = {unit_name}
+        elif selected_interfaces[physical_name] is not None:
+            selected_interfaces[physical_name].add(unit_name)
+
+    if selected_interfaces:
+        interfaces = etree.SubElement(configuration, "interfaces")
+        for physical_name, units in selected_interfaces.items():
+            interface = etree.SubElement(interfaces, "interface")
+            etree.SubElement(interface, "name").text = physical_name
+            if units is not None:
+                for unit_name in sorted(units):
+                    unit = etree.SubElement(interface, "unit")
+                    etree.SubElement(unit, "name").text = unit_name
+
+    return configuration
+
+
 @dataclass(frozen=True)
 class JunosData:
     """Parsed read-only Junos state used by Home Assistant entities."""
@@ -65,7 +96,7 @@ class JunosData:
     ipsec_tunnels_down: int | None
     chassis_cluster_enabled: bool | None
     chassis_cluster_redundancy_group_status: str | None
-    system_services: tuple[str, ...]
+    system_services: tuple[str, ...] | None
     interfaces: tuple[JunosInterfaceState, ...]
 
 
@@ -121,7 +152,7 @@ class JunosPyEzClient:
         try:
             _LOGGER.debug("Opening Junos NETCONF session to %s:%s", self.host, self.port)
             dev.open()
-            system_xml = self._optional_rpc(
+            system_xml = self._required_rpc(
                 dev,
                 "get-system-information",
                 "get_system_information",
@@ -131,12 +162,12 @@ class JunosPyEzClient:
                 "get-system-uptime-information",
                 "get_system_uptime_information",
             )
-            re_xml = self._optional_rpc(
+            re_xml = self._required_rpc(
                 dev,
                 "get-route-engine-information",
                 "get_route_engine_information",
             )
-            alarm_xml = self._optional_rpc(
+            alarm_xml = self._required_rpc(
                 dev,
                 "get-alarm-information",
                 "get_alarm_information",
@@ -157,11 +188,7 @@ class JunosPyEzClient:
                 "get-chassis-cluster-status",
                 "get_chassis_cluster_status",
             )
-            config_xml = self._optional_rpc(
-                dev,
-                "get-configuration",
-                "get_config",
-            )
+            config_xml = self._configuration_information(dev)
             interface_xml = self._interface_information(dev)
             data = parse_junos_data(
                 system_xml,
@@ -176,6 +203,7 @@ class JunosPyEzClient:
                 interface_allowlist=self.interface_allowlist,
                 fallback_host=self.host,
             )
+            self._validate_allowlisted_interfaces(data.interfaces)
             _log_missing_metrics(data, re_xml, uptime_xml)
             return data
         except ConnectAuthError as err:
@@ -228,20 +256,58 @@ class JunosPyEzClient:
             _LOGGER.debug("Optional Junos RPC %s failed: %s", rpc_name, err)
             return None
 
+    def _required_rpc(
+        self,
+        dev: Device,
+        rpc_name: str,
+        method_name: str,
+        **kwargs: Any,
+    ) -> Any:
+        """Run a required RPC and surface permission/support errors to HA."""
+        try:
+            rpc_call = getattr(dev.rpc, method_name)
+            return rpc_call(**kwargs)
+        except (AttributeError, RpcError) as err:
+            raise JunosNetconfConnectionError(
+                f"Required Junos RPC {rpc_name} failed: {err}"
+            ) from err
+
+    def _configuration_information(self, dev: Device) -> Any | None:
+        """Fetch the small committed configuration subset for this poll."""
+        return self._optional_rpc(
+            dev,
+            "get-configuration (filtered)",
+            "get_config",
+            filter_xml=_configuration_filter(self.interface_allowlist),
+            options={"database": "committed"},
+        )
+
     def _interface_information(self, dev: Device) -> tuple[Any, ...]:
         """Return detailed interface XML only for allowlisted interfaces."""
         replies: list[Any] = []
         for interface_name in self.interface_allowlist:
-            reply = self._optional_rpc(
+            reply = self._required_rpc(
                 dev,
                 f"get-interface-information {interface_name}",
                 "get_interface_information",
                 interface_name=interface_name,
                 extensive=True,
             )
-            if reply is not None:
-                replies.append(reply)
+            replies.append(reply)
         return tuple(replies)
+
+    def _validate_allowlisted_interfaces(
+        self,
+        interfaces: tuple[JunosInterfaceState, ...],
+    ) -> None:
+        """Fail clearly when an explicitly requested interface returned no data."""
+        returned_names = {interface.name for interface in interfaces}
+        missing_names = sorted(set(self.interface_allowlist) - returned_names)
+        if missing_names:
+            raise JunosNetconfConnectionError(
+                "No operational data returned for allowlisted interface(s): "
+                + ", ".join(missing_names)
+            )
 
     def _close(self, dev: Device) -> None:
         """Close the PyEZ session without masking the original failure."""
@@ -402,10 +468,10 @@ def _first_uptime(system_xml: Any, uptime_xml: Any | None, re_xml: Any) -> str |
     )
 
 
-def _system_services(config_xml: Any | None) -> tuple[str, ...]:
+def _system_services(config_xml: Any | None) -> tuple[str, ...] | None:
     """Return configured system services useful as HA status entities."""
     if config_xml is None:
-        return ()
+        return None
 
     services: list[str] = []
     system_services = _first_descendant(config_xml, "services")

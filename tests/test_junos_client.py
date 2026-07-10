@@ -52,6 +52,8 @@ junos_client = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = junos_client
 SPEC.loader.exec_module(junos_client)
 parse_junos_data = junos_client.parse_junos_data
+JunosPyEzClient = junos_client.JunosPyEzClient
+JunosNetconfConnectionError = junos_client.JunosNetconfConnectionError
 
 
 ROUTE_ENGINE_XML = """\
@@ -280,6 +282,29 @@ class JunosParserTest(TestCase):
         self.assertEqual(data.re_memory_usage, 33)
         self.assertEqual(data.uptime, "395 days, 20 hours, 11 minutes, 20 seconds")
 
+    def test_missing_configuration_keeps_service_state_unknown(self) -> None:
+        """Distinguish unavailable configuration from disabled services."""
+        data = parse_junos_data(
+            ET.fromstring(SYSTEM_XML),
+            ET.fromstring(ROUTE_ENGINE_XML),
+            ET.fromstring(ALARM_XML),
+            fallback_host="192.0.2.1",
+        )
+
+        self.assertIsNone(data.system_services)
+
+    def test_available_configuration_reports_disabled_services(self) -> None:
+        """Represent an available configuration with no services as empty."""
+        data = parse_junos_data(
+            ET.fromstring(SYSTEM_XML),
+            ET.fromstring(ROUTE_ENGINE_XML),
+            ET.fromstring(ALARM_XML),
+            config_xml=ET.fromstring("<configuration><system/></configuration>"),
+            fallback_host="192.0.2.1",
+        )
+
+        self.assertEqual(data.system_services, ())
+
     def test_parse_optional_srx_metrics(self) -> None:
         """Parse optional SRX flow, IPsec, and chassis cluster metrics."""
         data = parse_junos_data(
@@ -355,3 +380,82 @@ class JunosParserTest(TestCase):
         self.assertTrue(interfaces["irb.100"].enabled)
         self.assertEqual(interfaces["irb.100"].rx_mbps, 1.0)
         self.assertEqual(interfaces["irb.100"].tx_mbps, 2.0)
+
+
+class JunosClientRpcPolicyTest(TestCase):
+    """Guard required RPC handling and narrow configuration collection."""
+
+    def _client(self) -> JunosPyEzClient:
+        return JunosPyEzClient(
+            host="192.0.2.1",
+            port=830,
+            username="monitor",
+            password="secret",
+            timeout=15,
+            verify_hostkey=True,
+            interface_allowlist=("ge-0/0/0", "irb.100", "irb.200"),
+        )
+
+    def test_required_rpc_does_not_hide_permission_errors(self) -> None:
+        """Required base telemetry must fail instead of creating empty entities."""
+
+        class Rpc:
+            @staticmethod
+            def get_system_information() -> None:
+                raise junos_client.RpcError("permission denied")
+
+        class Device:
+            rpc = Rpc()
+
+        with self.assertRaisesRegex(
+            JunosNetconfConnectionError,
+            "Required Junos RPC get-system-information failed",
+        ):
+            self._client()._required_rpc(
+                Device(),
+                "get-system-information",
+                "get_system_information",
+            )
+
+    def test_configuration_request_is_narrow_committed_and_refreshed(self) -> None:
+        """Poll only the required committed configuration subset."""
+        calls: list[dict[str, object]] = []
+
+        class Rpc:
+            @staticmethod
+            def get_config(**kwargs: object) -> object:
+                calls.append(kwargs)
+                return object()
+
+        class Device:
+            rpc = Rpc()
+
+        client = self._client()
+        self.assertIsNot(
+            client._configuration_information(Device()),
+            client._configuration_information(Device()),
+        )
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0]["options"], {"database": "committed"})
+
+        config_filter = calls[0]["filter_xml"]
+        self.assertEqual(len(config_filter.xpath("/configuration/system/host-name")), 1)
+        self.assertEqual(len(config_filter.xpath("/configuration/system/services")), 1)
+        self.assertEqual(
+            config_filter.xpath("/configuration/interfaces/interface/name/text()"),
+            ["ge-0/0/0", "irb"],
+        )
+        self.assertEqual(
+            config_filter.xpath(
+                "/configuration/interfaces/interface[name='irb']/unit/name/text()"
+            ),
+            ["100", "200"],
+        )
+
+    def test_missing_allowlisted_interface_is_actionable(self) -> None:
+        """Explicit interface requests must not disappear silently."""
+        with self.assertRaisesRegex(
+            JunosNetconfConnectionError,
+            "No operational data returned.*ge-0/0/0.*irb.100.*irb.200",
+        ):
+            self._client()._validate_allowlisted_interfaces(())

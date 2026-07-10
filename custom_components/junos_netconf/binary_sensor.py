@@ -34,25 +34,25 @@ SYSTEM_SERVICE_DESCRIPTIONS: tuple[JunosBinarySensorDescription, ...] = (
     JunosBinarySensorDescription(
         "service_ssh",
         "SSH Service Enabled",
-        lambda data: "ssh" in data.system_services,
+        lambda data: _service_enabled(data, "ssh"),
         BinarySensorDeviceClass.CONNECTIVITY,
     ),
     JunosBinarySensorDescription(
         "service_netconf_ssh",
         "NETCONF SSH Service Enabled",
-        lambda data: "netconf_ssh" in data.system_services,
+        lambda data: _service_enabled(data, "netconf_ssh"),
         BinarySensorDeviceClass.CONNECTIVITY,
     ),
     JunosBinarySensorDescription(
         "service_dhcp_local_server",
         "DHCP Local Server Enabled",
-        lambda data: "dhcp_local_server" in data.system_services,
+        lambda data: _service_enabled(data, "dhcp_local_server"),
         BinarySensorDeviceClass.CONNECTIVITY,
     ),
     JunosBinarySensorDescription(
         "service_web_management_https",
         "HTTPS Web Management Enabled",
-        lambda data: "web_management_https" in data.system_services,
+        lambda data: _service_enabled(data, "web_management_https"),
         BinarySensorDeviceClass.CONNECTIVITY,
     ),
 )
@@ -73,7 +73,6 @@ async def async_setup_entry(
     entities.extend(
         JunosSystemServiceBinarySensor(coordinator, entry, description)
         for description in SYSTEM_SERVICE_DESCRIPTIONS
-        if description.value_fn(coordinator.data)
     )
     entities.extend(
         JunosInterfaceEnabledBinarySensor(coordinator, entry, interface.name)
@@ -236,6 +235,13 @@ def _device_info(data: JunosData, entry: ConfigEntry) -> DeviceInfo:
         serial_number=data.serial_number,
         sw_version=data.version,
     )
+
+
+def _service_enabled(data: JunosData, service: str) -> bool | None:
+    """Return service configuration state, or unknown when config is unavailable."""
+    if data.system_services is None:
+        return None
+    return service in data.system_services
 
 
 def _slug(value: str) -> str:

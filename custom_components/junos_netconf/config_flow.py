@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 import logging
 from typing import Any
 
@@ -107,6 +108,62 @@ class JunosNetconfConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="user",
             data_schema=STEP_USER_DATA_SCHEMA,
+            errors=errors,
+        )
+
+    async def async_step_reauth(
+        self,
+        _entry_data: Mapping[str, Any],
+    ) -> FlowResult:
+        """Start reauthentication after Home Assistant reports auth failure."""
+        return await self.async_step_reauth_confirm()
+
+    async def async_step_reauth_confirm(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> FlowResult:
+        """Validate replacement credentials and reload the config entry."""
+        entry = self._get_reauth_entry()
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            updated_data = {**entry.data, **user_input}
+            try:
+                unique_id = await validate_input(self.hass, updated_data)
+            except JunosNetconfAuthError:
+                errors["base"] = "invalid_auth"
+            except JunosNetconfConnectionError as err:
+                _LOGGER.warning("Junos NETCONF reauthentication failed: %s", err)
+                errors["base"] = "cannot_connect"
+            except Exception as err:
+                _LOGGER.exception(
+                    "Unexpected Junos NETCONF reauthentication error: %s",
+                    err,
+                )
+                errors["base"] = "unknown"
+            else:
+                await self.async_set_unique_id(unique_id)
+                self._abort_if_unique_id_mismatch()
+                return self.async_update_reload_and_abort(
+                    entry,
+                    data_updates=user_input,
+                )
+
+        return self.async_show_form(
+            step_id="reauth_confirm",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_USERNAME,
+                        default=entry.data[CONF_USERNAME],
+                    ): str,
+                    vol.Required(CONF_PASSWORD): selector.TextSelector(
+                        selector.TextSelectorConfig(
+                            type=selector.TextSelectorType.PASSWORD
+                        )
+                    ),
+                }
+            ),
             errors=errors,
         )
 

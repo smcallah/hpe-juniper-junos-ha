@@ -18,7 +18,18 @@ class IntegrationSourceTest(unittest.TestCase):
     def test_manifest_version_is_current(self) -> None:
         """Expose feature updates to HACS through a new integration version."""
         manifest = json.loads((INTEGRATION / "manifest.json").read_text())
-        self.assertEqual(manifest["version"], "0.1.9")
+        self.assertEqual(manifest["version"], "0.1.11")
+
+    def test_config_flow_implements_reauthentication(self) -> None:
+        """Keep the UI recovery path paired with ConfigEntryAuthFailed."""
+        tree = ast.parse((INTEGRATION / "config_flow.py").read_text())
+        method_names = {
+            node.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.AsyncFunctionDef)
+        }
+        self.assertIn("async_step_reauth", method_names)
+        self.assertIn("async_step_reauth_confirm", method_names)
 
     def test_options_flow_does_not_assign_config_entry(self) -> None:
         """Use the config entry injected by current Home Assistant."""
