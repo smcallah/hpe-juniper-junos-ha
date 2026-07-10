@@ -3,8 +3,9 @@
 `junos_netconf` is a Home Assistant custom integration for read-only monitoring
 of Juniper/HPE Junos devices over NETCONF SSH using Junos PyEZ.
 
-This MVP performs operational RPC reads only. It does not implement any write,
-configuration, commit, rollback, or action service.
+This MVP performs operational RPC reads plus a small filtered, read-only
+configuration lookup. It does not implement any write, configuration change,
+commit, rollback, or action service.
 
 ## Directory tree
 
@@ -39,6 +40,10 @@ The MVP creates these entities:
 - `binary_sensor.netconf_ssh_service_enabled`
 - `binary_sensor.dhcp_local_server_enabled`
 - `binary_sensor.https_web_management_enabled`
+
+Configured-service entities remain present when a service is disabled and
+report `off`. If configuration data is temporarily unavailable, they report
+unknown instead of incorrectly reporting `off`.
 
 Hostname, model, serial number, and Junos version are used as Home Assistant
 device registry metadata, not exposed as standalone sensors.
@@ -79,7 +84,7 @@ Example read-only user configuration:
 
 ```text
 set system login class ha-monitor permissions [ view view-configuration ]
-set system login class ha-monitor allow-commands "(show system information|show system uptime|show chassis routing-engine|show chassis alarms|show security flow session summary|show interfaces terse|show configuration system services|show configuration interfaces)"
+set system login class ha-monitor allow-commands "(show system information|show system uptime|show chassis routing-engine|show chassis alarms|show security flow session summary|show interfaces .* extensive|show configuration system services|show configuration interfaces)"
 set system login user ha-monitor uid 2001
 set system login user ha-monitor class ha-monitor
 set system login user ha-monitor authentication plain-text-password
@@ -120,6 +125,10 @@ For initial setup and lab use, keep it unchecked. After the integration works,
 you can pre-load the device host key into the environment used by Home Assistant
 and then enable this option.
 
+If Junos later rejects the stored username or password, Home Assistant starts a
+reauthentication flow so the credentials can be replaced without removing and
+re-adding the integration.
+
 ## RPCs used
 
 The PyEZ client opens a NETCONF session with `Device(...).open()`, runs these
@@ -133,8 +142,8 @@ get-alarm-information
 get-flow-session-information summary
 get-ipsec-security-associations-information
 get-chassis-cluster-status
-get-configuration
-get-interface-information terse
+get-configuration (committed database, filtered to system services and allowlisted interfaces)
+get-interface-information extensive (allowlisted interfaces only)
 ```
 
 Blocking PyEZ calls run through Home Assistant's executor via

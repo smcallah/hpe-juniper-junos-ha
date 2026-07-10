@@ -14,6 +14,14 @@
           "scan_interval": "Polling interval in seconds",
           "interface_allowlist": "Interfaces to monitor"
         }
+      },
+      "reauth_confirm": {
+        "title": "Reauthenticate Junos NETCONF",
+        "description": "Enter working NETCONF credentials for this Junos device.",
+        "data": {
+          "username": "Username",
+          "password": "Password"
+        }
       }
     },
     "error": {
@@ -22,7 +30,8 @@
       "unknown": "Unexpected error."
     },
     "abort": {
-      "already_configured": "This Junos device is already configured."
+      "already_configured": "This Junos device is already configured.",
+      "reauth_successful": "Junos NETCONF authentication was updated successfully."
     }
   },
   "options": {
